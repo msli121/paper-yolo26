@@ -1,25 +1,26 @@
-# -*- coding: utf-8 -*-
 # @Time       : 2026/2/28 14:54
 # @File       : yolo26画热力图.py
 # @Description:
 import warnings
 
-warnings.filterwarnings('ignore')
-warnings.simplefilter('ignore')
-import torch, yaml, cv2, os, shutil, sys, copy
+warnings.filterwarnings("ignore")
+warnings.simplefilter("ignore")
+import copy
+import os
+import shutil
+
+import cv2
 import numpy as np
+import torch
 
 np.random.seed(0)
-import matplotlib.pyplot as plt
-from tqdm import trange
 from PIL import Image
-from ultralytics import YOLO
-from ultralytics.utils.torch_utils import intersect_dicts
-from ultralytics.utils.nms import non_max_suppression
-from pytorch_grad_cam import GradCAMPlusPlus, GradCAM, XGradCAM, EigenCAM, HiResCAM, LayerCAM, RandomCAM, EigenGradCAM, \
-    AblationCAM
-from pytorch_grad_cam.utils.image import show_cam_on_image, scale_cam_image
 from pytorch_grad_cam.activations_and_gradients import ActivationsAndGradients
+from pytorch_grad_cam.utils.image import scale_cam_image, show_cam_on_image
+from tqdm import trange
+
+from ultralytics import YOLO
+from ultralytics.utils.nms import non_max_suppression
 
 
 def letterbox(im, new_shape=(640, 640), color=(114, 114, 114), auto=True, scaleFill=False, scaleup=True, stride=32):
@@ -35,7 +36,7 @@ def letterbox(im, new_shape=(640, 640), color=(114, 114, 114), auto=True, scaleF
 
     # Compute padding
     ratio = r, r  # width, height ratios
-    new_unpad = int(round(shape[1] * r)), int(round(shape[0] * r))
+    new_unpad = round(shape[1] * r), round(shape[0] * r)
     dw, dh = new_shape[1] - new_unpad[0], new_shape[0] - new_unpad[1]  # wh padding
     if auto:  # minimum rectangle
         dw, dh = np.mod(dw, stride), np.mod(dh, stride)  # wh padding
@@ -49,15 +50,15 @@ def letterbox(im, new_shape=(640, 640), color=(114, 114, 114), auto=True, scaleF
 
     if shape[::-1] != new_unpad:  # resize
         im = cv2.resize(im, new_unpad, interpolation=cv2.INTER_LINEAR)
-    top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
-    left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
+    top, bottom = round(dh - 0.1), round(dh + 0.1)
+    left, right = round(dw - 0.1), round(dw + 0.1)
     im = cv2.copyMakeBorder(im, top, bottom, left, right, cv2.BORDER_CONSTANT, value=color)  # add border
     return im, ratio, (top, bottom, left, right)
 
 
 class ActivationsAndGradients:
-    """ Class for extracting activations and
-    registering gradients from targetted intermediate layers """
+    """Class for extracting activations and registering gradients from targeted intermediate layers.
+    """
 
     def __init__(self, model, target_layers, reshape_transform):
         self.model = model
@@ -66,12 +67,10 @@ class ActivationsAndGradients:
         self.reshape_transform = reshape_transform
         self.handles = []
         for target_layer in target_layers:
-            self.handles.append(
-                target_layer.register_forward_hook(self.save_activation))
+            self.handles.append(target_layer.register_forward_hook(self.save_activation))
             # Because of https://github.com/pytorch/pytorch/issues/61519,
             # we don't use backward hook to record gradients.
-            self.handles.append(
-                target_layer.register_forward_hook(self.save_gradient))
+            self.handles.append(target_layer.register_forward_hook(self.save_gradient))
 
     def save_activation(self, module, input, output):
         activation = output
@@ -89,7 +88,7 @@ class ActivationsAndGradients:
         def _store_grad(grad):
             if self.reshape_transform is not None:
                 grad = self.reshape_transform(grad)
-            self.gradients = [grad.cpu().detach()] + self.gradients
+            self.gradients = [grad.cpu().detach(), *self.gradients]
 
         output.register_hook(_store_grad)
 
@@ -99,18 +98,19 @@ class ActivationsAndGradients:
             boxes_ = result[:, :, :4]
             sorted, indices = torch.sort(logits_[:, :, 0], descending=True)
             return logits_[0][indices[0]], boxes_[0][indices[0]]
-        elif self.model.task == 'detect':
+        elif self.model.task == "detect":
             logits_ = result[:, 4:]
             boxes_ = result[:, :4]
-            sorted, indices = torch.sort(logits_.max(1)[0], descending=True)
+            _sorted, indices = torch.sort(logits_.max(1)[0], descending=True)
             return torch.transpose(logits_[0], dim0=0, dim1=1)[indices[0]], torch.transpose(boxes_[0], dim0=0, dim1=1)[
-                indices[0]]
+                indices[0]
+            ]
 
     def __call__(self, x):
         self.gradients = []
         self.activations = []
         model_output = self.model(x)
-        if self.model.task == 'detect':
+        if self.model.task == "detect":
             post_result, pre_post_boxes = self.post_process(model_output[0])
             return [[post_result, pre_post_boxes]]
 
@@ -132,27 +132,39 @@ class yolo_detect_target(torch.nn.Module):
         result = []
         for i in trange(int(post_result.size(0) * self.ratio)):
             if (self.end2end and float(post_result[i, 0]) < self.conf) or (
-                    not self.end2end and float(post_result[i].max()) < self.conf):
+                not self.end2end and float(post_result[i].max()) < self.conf
+            ):
                 break
-            if self.ouput_type == 'class' or self.ouput_type == 'all':
+            if self.ouput_type == "class" or self.ouput_type == "all":
                 if self.end2end:
                     result.append(post_result[i, 0])
                 else:
                     result.append(post_result[i].max())
-            elif self.ouput_type == 'box' or self.ouput_type == 'all':
+            elif self.ouput_type == "box" or self.ouput_type == "all":
                 for j in range(4):
                     result.append(pre_post_boxes[i, j])
         return sum(result)
 
 
 class yolo26_heatmap:
-    def __init__(self, weight, device, layer, backward_type, conf_threshold, ratio, show_result, renormalize,
-                 method='EigenCAM',
-                 task='detect', img_size=640):
+    def __init__(
+        self,
+        weight,
+        device,
+        layer,
+        backward_type,
+        conf_threshold,
+        ratio,
+        show_result,
+        renormalize,
+        method="EigenCAM",
+        task="detect",
+        img_size=640,
+    ):
         device = torch.device(device)
         model_yolo = YOLO(weight)
         model_names = model_yolo.names
-        print(f'model class info:{model_names}')
+        print(f"model class info:{model_names}")
         model = copy.deepcopy(model_yolo.model)
         model.to(device)
         model.info()
@@ -161,10 +173,10 @@ class yolo26_heatmap:
         model.eval()
 
         model.task = task
-        if not hasattr(model, 'end2end'):
+        if not hasattr(model, "end2end"):
             model.end2end = False
 
-        if task == 'detect':
+        if task == "detect":
             target = yolo_detect_target(backward_type, conf_threshold, ratio, model.end2end)
         else:
             raise Exception(f"not support task({task}).")
@@ -183,13 +195,22 @@ class yolo26_heatmap:
     def draw_detections(self, box, color, name, img):
         xmin, ymin, xmax, ymax = list(map(int, list(box)))
         cv2.rectangle(img, (xmin, ymin), (xmax, ymax), tuple(int(x) for x in color), 2)  # 绘制检测框
-        cv2.putText(img, str(name), (xmin, ymin - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.8, tuple(int(x) for x in color), 2,
-                    lineType=cv2.LINE_AA)  # 绘制类别、置信度
+        cv2.putText(
+            img,
+            str(name),
+            (xmin, ymin - 5),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            tuple(int(x) for x in color),
+            2,
+            lineType=cv2.LINE_AA,
+        )  # 绘制类别、置信度
         return img
 
     def renormalize_cam_in_bounding_boxes(self, boxes, image_float_np, grayscale_cam):
-        """Normalize the CAM to be in the range [0, 1]
-        inside every bounding boxes, and zero outside of the bounding boxes. """
+        """Normalize the CAM to be in the range [0, 1] inside every bounding boxes, and zero outside of the bounding
+        boxes.
+        """
         renormalized_cam = np.zeros(grayscale_cam.shape, dtype=np.float32)
         for x1, y1, x2, y2 in boxes:
             x1, y1 = max(x1, 0), max(y1, 0)
@@ -206,36 +227,39 @@ class yolo26_heatmap:
         except:
             print(f"Warning... {img_path} read failure.")
             return
-        img, _, (top, bottom, left, right) = letterbox(img, new_shape=(self.img_size, self.img_size),
-                                                       auto=True)  # 如果需要完全固定成宽高一样就把auto设置为False
+        img, _, (top, bottom, left, right) = letterbox(
+            img, new_shape=(self.img_size, self.img_size), auto=True
+        )  # 如果需要完全固定成宽高一样就把auto设置为False
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img = np.float32(img) / 255.0
         tensor = torch.from_numpy(np.transpose(img, axes=[2, 0, 1])).unsqueeze(0).to(self.device)
-        print(f'tensor size:{tensor.size()}')
+        print(f"tensor size:{tensor.size()}")
 
         try:
             grayscale_cam = self.method(tensor, [self.target])
-        except AttributeError as e:
-            print(f"Warning... self.method(tensor, [self.target]) failure.")
+        except AttributeError:
+            print("Warning... self.method(tensor, [self.target]) failure.")
             return
 
         grayscale_cam = grayscale_cam[0, :]
         cam_image = show_cam_on_image(img, grayscale_cam, use_rgb=True)
 
         pred = self.model_yolo.predict(tensor, conf=self.conf_threshold, iou=0.7)[0]
-        if self.renormalize and self.task in ['detect', 'segment', 'pose']:
-            cam_image = self.renormalize_cam_in_bounding_boxes(pred.boxes.xyxy.cpu().detach().numpy().astype(np.int32),
-                                                               img, grayscale_cam)
+        if self.renormalize and self.task in ["detect", "segment", "pose"]:
+            cam_image = self.renormalize_cam_in_bounding_boxes(
+                pred.boxes.xyxy.cpu().detach().numpy().astype(np.int32), img, grayscale_cam
+            )
         if self.show_result:
-            cam_image = pred.plot(img=cam_image,
-                                  conf=True,
-                                  font_size=None,
-                                  line_width=None,
-                                  labels=False,
-                                  )
+            cam_image = pred.plot(
+                img=cam_image,
+                conf=True,
+                font_size=None,
+                line_width=None,
+                labels=False,
+            )
 
         # 去掉padding边界
-        cam_image = cam_image[top:cam_image.shape[0] - bottom, left:cam_image.shape[1] - right]
+        cam_image = cam_image[top : cam_image.shape[0] - bottom, left : cam_image.shape[1] - right]
         cam_image = Image.fromarray(cam_image)
         cam_image.save(save_path)
 
@@ -248,25 +272,25 @@ class yolo26_heatmap:
 
         if os.path.isdir(img_path):
             for img_path_ in os.listdir(img_path):
-                self.process(f'{img_path}/{img_path_}', f'{save_path}/{img_path_}')
+                self.process(f"{img_path}/{img_path_}", f"{save_path}/{img_path_}")
         else:
-            self.process(img_path, f'{save_path}/result.png')
+            self.process(img_path, f"{save_path}/result.png")
 
 
 def get_params():
     params = {
-        'weight': 'yolo26n.pt',  # 指定权重
-        'device': 'cuda:0',
-        'layer': [16, 18],  # 指定yaml文件对应的层号
-        'backward_type': 'class',
-        'conf_threshold': 0.2,  # 0.2
-        'ratio': 0.02,  # 0.02-0.1
-        'show_result': False,  # 不需要绘制结果请设置为False
-        'renormalize': True,  # 需要把热力图限制在框内请设置为True
+        "weight": "yolo26n.pt",  # 指定权重
+        "device": "cuda:0",
+        "layer": [16, 18],  # 指定yaml文件对应的层号
+        "backward_type": "class",
+        "conf_threshold": 0.2,  # 0.2
+        "ratio": 0.02,  # 0.02-0.1
+        "show_result": False,  # 不需要绘制结果请设置为False
+        "renormalize": True,  # 需要把热力图限制在框内请设置为True
     }
     return params
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     model = yolo26_heatmap(**get_params())
-    model(r'D:\PycharmProjects\ultralytics\ultralytics\assets\bus.jpg', 'data')
+    model(r"D:\PycharmProjects\ultralytics\ultralytics\assets\bus.jpg", "data")

@@ -1,21 +1,22 @@
-# -*- coding: utf-8 -*-
 # @Time       : 2026/2/28 15:50
 # @File       : ABRNet_ARF_MCA_TGRS2025.py
 # @Description: ARF 模块通过自适应调整感受野，增强了小目标特征提取的能力，而 BC 模块则通过多尺度交叉轴注意力融合全局信息，提高了目标定位的准确性和网络的鲁棒性。两者的结合使得 ABRNet 在红外小目标检测任务中取得了更好的性能。
 
+import numbers
+
 import torch
 import torch.nn as nn
-import numbers
 from einops import rearrange
-from ultralytics.nn.modules import C2f, C3, Conv
+
+from ultralytics.nn.modules import C3, C2f, Conv
 from ultralytics.nn.modules.block import PSABlock
 
-__all__ = ['C3k2_MCA', 'C3k2_ARF']
+__all__ = ["C3k2_ARF", "C3k2_MCA"]
 
 
 class ARFModule(nn.Module):
     def __init__(self, in_channels, out_channels):
-        super(ARFModule, self).__init__()
+        super().__init__()
         # 定义多个卷积核大小的卷积层
         self.conv3x3 = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
         self.conv5x5 = nn.Conv2d(in_channels, out_channels, kernel_size=5, padding=2)
@@ -51,16 +52,16 @@ class ARFModule(nn.Module):
 
 
 def to_3d(x):
-    return rearrange(x, 'b c h w -> b (h w) c')
+    return rearrange(x, "b c h w -> b (h w) c")
 
 
 def to_4d(x, h, w):
-    return rearrange(x, 'b (h w) c -> b c h w', h=h, w=w)
+    return rearrange(x, "b (h w) c -> b c h w", h=h, w=w)
 
 
 class BiasFree_LayerNorm(nn.Module):
     def __init__(self, normalized_shape):
-        super(BiasFree_LayerNorm, self).__init__()
+        super().__init__()
         if isinstance(normalized_shape, numbers.Integral):
             normalized_shape = (normalized_shape,)
         normalized_shape = torch.Size(normalized_shape)
@@ -77,7 +78,7 @@ class BiasFree_LayerNorm(nn.Module):
 
 class WithBias_LayerNorm(nn.Module):
     def __init__(self, normalized_shape):
-        super(WithBias_LayerNorm, self).__init__()
+        super().__init__()
         if isinstance(normalized_shape, numbers.Integral):
             normalized_shape = (normalized_shape,)
         normalized_shape = torch.Size(normalized_shape)
@@ -96,8 +97,8 @@ class WithBias_LayerNorm(nn.Module):
 
 class LayerNorm(nn.Module):
     def __init__(self, dim, LayerNorm_type):
-        super(LayerNorm, self).__init__()
-        if LayerNorm_type == 'BiasFree':
+        super().__init__()
+        if LayerNorm_type == "BiasFree":
             self.body = BiasFree_LayerNorm(dim)
         else:
             self.body = WithBias_LayerNorm(dim)
@@ -108,8 +109,8 @@ class LayerNorm(nn.Module):
 
 
 class MCAttention(nn.Module):
-    def __init__(self, dim, num_heads=8, LayerNorm_type='WithBias'):
-        super(MCAttention, self).__init__()
+    def __init__(self, dim, num_heads=8, LayerNorm_type="WithBias"):
+        super().__init__()
         self.num_heads = num_heads
         self.temperature = nn.Parameter(torch.ones(num_heads, 1, 1))
 
@@ -119,14 +120,12 @@ class MCAttention(nn.Module):
         self.conv0_2 = nn.Conv2d(dim, dim, (7, 1), padding=(3, 0), groups=dim)
         self.conv1_1 = nn.Conv2d(dim, dim, (1, 11), padding=(0, 5), groups=dim)
         self.conv1_2 = nn.Conv2d(dim, dim, (11, 1), padding=(5, 0), groups=dim)
-        self.conv2_1 = nn.Conv2d(
-            dim, dim, (1, 21), padding=(0, 10), groups=dim)
-        self.conv2_2 = nn.Conv2d(
-            dim, dim, (21, 1), padding=(10, 0), groups=dim)
+        self.conv2_1 = nn.Conv2d(dim, dim, (1, 21), padding=(0, 10), groups=dim)
+        self.conv2_2 = nn.Conv2d(dim, dim, (21, 1), padding=(10, 0), groups=dim)
         self.sigmod = nn.Sigmoid()
 
     def forward(self, x):
-        b, c, h, w = x.shape
+        _b, _c, h, w = x.shape
         x1 = self.norm1(x)
         attn_00 = self.conv0_1(x1)
         attn_01 = self.conv0_2(x1)
@@ -138,25 +137,25 @@ class MCAttention(nn.Module):
         out2 = attn_01 + attn_11 + attn_21
         out1 = self.project_out(out1)
         out2 = self.project_out(out2)
-        k1 = rearrange(out1, 'b (head c) h w -> b head h (w c)', head=self.num_heads)
-        v1 = rearrange(out1, 'b (head c) h w -> b head h (w c)', head=self.num_heads)
-        k2 = rearrange(out2, 'b (head c) h w -> b head w (h c)', head=self.num_heads)
-        v2 = rearrange(out2, 'b (head c) h w -> b head w (h c)', head=self.num_heads)
-        q2 = rearrange(out1, 'b (head c) h w -> b head w (h c)', head=self.num_heads)
-        q1 = rearrange(out2, 'b (head c) h w -> b head h (w c)', head=self.num_heads)
+        k1 = rearrange(out1, "b (head c) h w -> b head h (w c)", head=self.num_heads)
+        v1 = rearrange(out1, "b (head c) h w -> b head h (w c)", head=self.num_heads)
+        k2 = rearrange(out2, "b (head c) h w -> b head w (h c)", head=self.num_heads)
+        v2 = rearrange(out2, "b (head c) h w -> b head w (h c)", head=self.num_heads)
+        q2 = rearrange(out1, "b (head c) h w -> b head w (h c)", head=self.num_heads)
+        q1 = rearrange(out2, "b (head c) h w -> b head h (w c)", head=self.num_heads)
         q1 = torch.nn.functional.normalize(q1, dim=-1)
         q2 = torch.nn.functional.normalize(q2, dim=-1)
         k1 = torch.nn.functional.normalize(k1, dim=-1)
         k2 = torch.nn.functional.normalize(k2, dim=-1)
 
-        attn1 = (q1 @ k1.transpose(-2, -1))
+        attn1 = q1 @ k1.transpose(-2, -1)
         attn1 = attn1.softmax(dim=-1)
         out3 = (attn1 @ v1) + q1
-        attn2 = (q2 @ k2.transpose(-2, -1))
+        attn2 = q2 @ k2.transpose(-2, -1)
         attn2 = attn2.softmax(dim=-1)
         out4 = (attn2 @ v2) + q2
-        out3 = rearrange(out3, 'b head h (w c) -> b (head c) h w', head=self.num_heads, h=h, w=w)
-        out4 = rearrange(out4, 'b head w (h c) -> b (head c) h w', head=self.num_heads, h=h, w=w)
+        out3 = rearrange(out3, "b head h (w c) -> b (head c) h w", head=self.num_heads, h=h, w=w)
+        out4 = rearrange(out4, "b head w (h c) -> b (head c) h w", head=self.num_heads, h=h, w=w)
 
         out = self.sigmod(self.project_out(out3) + self.project_out(out4)) * x
         return out
@@ -195,8 +194,17 @@ class C3k_MCA(C3):
 class C3k2_MCA(C2f):
     """Faster Implementation of CSP Bottleneck with 2 convolutions."""
 
-    def __init__(self, c1: int, c2: int, n: int = 1, c3k: bool = False, e: float = 0.5, attn: bool = False, g: int = 1,
-                 shortcut: bool = True, ):
+    def __init__(
+        self,
+        c1: int,
+        c2: int,
+        n: int = 1,
+        c3k: bool = False,
+        e: float = 0.5,
+        attn: bool = False,
+        g: int = 1,
+        shortcut: bool = True,
+    ):
         super().__init__(c1, c2, n, shortcut, g, e)
         self.m = nn.ModuleList(
             nn.Sequential(
@@ -224,8 +232,17 @@ class C3k_ARF(C3):
 class C3k2_ARF(C2f):
     """Faster Implementation of CSP Bottleneck with 2 convolutions."""
 
-    def __init__(self, c1: int, c2: int, n: int = 1, c3k: bool = False, e: float = 0.5, attn: bool = False, g: int = 1,
-                 shortcut: bool = True, ):
+    def __init__(
+        self,
+        c1: int,
+        c2: int,
+        n: int = 1,
+        c3k: bool = False,
+        e: float = 0.5,
+        attn: bool = False,
+        g: int = 1,
+        shortcut: bool = True,
+    ):
         super().__init__(c1, c2, n, shortcut, g, e)
         self.m = nn.ModuleList(
             nn.Sequential(

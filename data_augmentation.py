@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # @Time       : 2026/2/28 15:32
 # @File       : data_augmentation.py
 # @Description:
@@ -13,22 +12,21 @@
 # add_pepper_noise：噪声增强，添加黑点噪声，增强抗干扰能力
 
 import torch
-from PIL import Image
-from PIL import ImageFile
+from PIL import Image, ImageFile
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
-from torchvision import transforms
-import numpy as np
-import matplotlib.pyplot as plt
 import os
 import random
+
+import numpy as np
+from torchvision import transforms
 
 random.seed(0)
 
 
 class DataAugmentationOnDetection:
     def __init__(self):
-        super(DataAugmentationOnDetection, self).__init__()
+        super().__init__()
 
     def resize_keep_ratio(self, image, boxes, target_size):
         old_size = image.size[0:2]
@@ -83,10 +81,12 @@ class DataAugmentationOnDetection:
             in_boundary = [i for i in range(boxes_xyxy.shape[0])]
             for i in range(boxes_xyxy.shape[0]):
                 if (boxes_xyxy[i, 0] < 0 and boxes_xyxy[i, 2] < 0) or (
-                        boxes_xyxy[i, 0] > size and boxes_xyxy[i, 2] > size):
+                    boxes_xyxy[i, 0] > size and boxes_xyxy[i, 2] > size
+                ):
                     in_boundary.remove(i)
                 elif (boxes_xyxy[i, 1] < 0 and boxes_xyxy[i, 3] < 0) or (
-                        boxes_xyxy[i, 1] > size and boxes_xyxy[i, 3] > size):
+                    boxes_xyxy[i, 1] > size and boxes_xyxy[i, 3] > size
+                ):
                     in_boundary.append(i)
             boxes_xyxy = boxes_xyxy[in_boundary]
             boxes = boxes_xyxy.clamp(min=0, max=size).reshape([-1, 4])
@@ -151,20 +151,20 @@ def get_image_list(image_path):
     files_list = []
     for root, sub_dirs, files in os.walk(image_path):
         for special_file in files:
-            special_file = special_file[0: len(special_file)]
+            special_file = special_file[0 : len(special_file)]
             files_list.append(special_file)
     return files_list
 
 
 def get_label_file(label_path, image_name):
-    fname = os.path.join(label_path, image_name[0: len(image_name) - 4] + ".txt")
+    fname = os.path.join(label_path, image_name[0 : len(image_name) - 4] + ".txt")
     data2 = []
     if not os.path.exists(fname):
         return data2
     if os.path.getsize(fname) == 0:
         return data2
     else:
-        with open(fname, 'r', encoding='utf-8') as infile:
+        with open(fname, encoding="utf-8") as infile:
             for line in infile:
                 data_line = line.strip("\n").split()
                 data2.append([float(i) for i in data_line])
@@ -172,14 +172,16 @@ def get_label_file(label_path, image_name):
 
 
 def save_Yolo(img, boxes, save_path, prefix, image_name):
-    if not os.path.exists(save_path) or \
-            not os.path.exists(os.path.join(save_path, "images")):
+    if not os.path.exists(save_path) or not os.path.exists(os.path.join(save_path, "images")):
         os.makedirs(os.path.join(save_path, "images"))
         os.makedirs(os.path.join(save_path, "labels"))
     try:
         img.save(os.path.join(save_path, "images", prefix + image_name))
-        with open(os.path.join(save_path, "labels", prefix + image_name[0:len(image_name) - 4] + ".txt"), 'w',
-                  encoding="utf-8") as f:
+        with open(
+            os.path.join(save_path, "labels", prefix + image_name[0 : len(image_name) - 4] + ".txt"),
+            "w",
+            encoding="utf-8",
+        ) as f:
             if len(boxes) > 0:
                 for data in boxes:
                     str_in = ""
@@ -188,7 +190,7 @@ def save_Yolo(img, boxes, save_path, prefix, image_name):
                             str_in += str(int(a))
                         else:
                             str_in += " " + str(float(a))
-                    f.write(str_in + '\n')
+                    f.write(str_in + "\n")
     except:
         print("ERROR: ", image_name, " is bad.")
 
@@ -236,7 +238,7 @@ def runAugumentation(image_path, label_path, save_path):
         print("end: " + image_name)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     image_path = r"E:\CSDN_yolo\YOLO26_AIguai\datasets\data_name\images\train"
     label_path = r"E:\CSDN_yolo\YOLO26_AIguai\datasets\data_name\labels\train"
     save_path = r"E:\CSDN_yolo\YOLO26_AIguai\datasets\data_name\results"
